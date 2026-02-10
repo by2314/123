@@ -35,7 +35,7 @@ class APKHardener:
         self.temp_dir = None
         self.metadata = {
             'input_apk': str(self.input_apk),
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now().isoformat(),
             'operations': []
         }
         
@@ -85,7 +85,7 @@ class APKHardener:
             metadata_file = os.path.join(temp_dir, 'META-INF', 'hardening.txt')
             os.makedirs(os.path.dirname(metadata_file), exist_ok=True)
             with open(metadata_file, 'w') as f:
-                f.write(f"Resource obfuscation applied\nTimestamp: {datetime.utcnow().isoformat()}\n")
+                f.write(f"Resource obfuscation applied\nTimestamp: {datetime.now().isoformat()}\n")
             
             # Repackage APK
             obfuscated_apk = apk_path.parent / f"{apk_path.stem}_obfuscated.apk"
@@ -132,7 +132,7 @@ class APKHardener:
             with open(metadata_file, 'w') as f:
                 f.write(f"DEX shell applied\n")
                 f.write(f"DEX files processed: {len(dex_files)}\n")
-                f.write(f"Timestamp: {datetime.utcnow().isoformat()}\n")
+                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
             
             # Repackage APK
             compressed_apk = apk_path.parent / f"{apk_path.stem}_dexshell.apk"
@@ -170,7 +170,7 @@ class APKHardener:
             
             integrity_data = {
                 'original_hash': original_hash,
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now().isoformat(),
                 'algorithm': 'SHA-256'
             }
             
