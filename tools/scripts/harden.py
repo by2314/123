@@ -14,6 +14,7 @@ import shutil
 import argparse
 import json
 import logging
+import urllib.request
 from pathlib import Path
 from datetime import datetime
 
@@ -393,7 +394,7 @@ class APKHardener:
         if current_apk != self.input_apk and current_apk != aligned_apk:
             try:
                 current_apk.unlink()
-            except:
+            except (OSError, FileNotFoundError):
                 pass
         
         return final_apk
@@ -403,7 +404,6 @@ def download_apk(url, output_path):
     """Download APK from URL"""
     logger.info(f"Downloading APK from {url}...")
     try:
-        import urllib.request
         urllib.request.urlretrieve(url, output_path)
         logger.info(f"APK downloaded to {output_path}")
         return True

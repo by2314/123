@@ -34,20 +34,17 @@ public class AntiDebug {
      * @return true if a tracer is detected
      */
     public static boolean isTracerPresent() {
-        try {
-            BufferedReader reader = new BufferedReader(new FileReader("/proc/self/status"));
+        try (BufferedReader reader = new BufferedReader(new FileReader("/proc/self/status"))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.startsWith("TracerPid:")) {
                     String[] parts = line.split(":");
                     if (parts.length > 1) {
                         int tracerPid = Integer.parseInt(parts[1].trim());
-                        reader.close();
                         return tracerPid != 0;
                     }
                 }
             }
-            reader.close();
         } catch (IOException | NumberFormatException e) {
             // Error reading status file
         }
@@ -61,12 +58,18 @@ public class AntiDebug {
      */
     public static boolean isTimingAnomaly() {
         long start = System.currentTimeMillis();
-        // Simple operation
+        // Simple operation - prevent optimization by using volatile result
+        double result = 0;
         for (int i = 0; i < 1000; i++) {
-            Math.sqrt(i);
+            result += Math.sqrt(i);
         }
         long end = System.currentTimeMillis();
         long duration = end - start;
+        
+        // Use result to prevent optimization
+        if (result < 0) {
+            return false;
+        }
         
         // If operation took unusually long, might be debugging
         return duration > 100;

@@ -102,6 +102,14 @@ jobs:
           ALIAS="${KEY_ALIAS:-debugkey}"
           KEY_PWD="${KEY_PASSWORD:-android}"
           
+          # Warn if using default credentials
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::Using auto-generated debug keystore. For production, configure KEYSTORE_BASE64 secret."
+          fi
+          if [ "$KEYSTORE_PWD" = "android" ]; then
+            echo "::warning::Using default keystore password. For production, configure KEYSTORE_PASSWORD secret."
+          fi
+          
           # Run keystore preparation script
           chmod +x tools/scripts/prepare_keystore.sh
           ./tools/scripts/prepare_keystore.sh debug.keystore "$KEYSTORE_PWD" "$ALIAS" "$KEY_PWD"

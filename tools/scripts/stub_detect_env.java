@@ -40,9 +40,10 @@ public class EnvDetector {
         // Try to execute su command
         try {
             Process process = Runtime.getRuntime().exec(new String[]{"/system/xbin/which", "su"});
-            BufferedReader in = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            if (in.readLine() != null) {
-                return true;
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                if (in.readLine() != null) {
+                    return true;
+                }
             }
         } catch (Exception e) {
             // su not found
