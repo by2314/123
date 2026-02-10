@@ -1,0 +1,216 @@
+name: APK Hardening Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_source:
+        description: 'Path or URL to source APK'
+        required: true
+        type: string
+        default: 'input/app.apk'
+      
+      resource_obfuscation:
+        description: 'Enable resource obfuscation'
+        required: false
+        type: boolean
+        default: false
+      
+      dex_shell:
+        description: 'Enable DEX shell compression'
+        required: false
+        type: boolean
+        default: true
+      
+      integrity_check:
+        description: 'Enable integrity check'
+        required: false
+        type: boolean
+        default: true
+      
+      env_detection:
+        description: 'Enable environment/root detection stub'
+        required: false
+        type: boolean
+        default: false
+      
+      anti_debug:
+        description: 'Enable anti-debug stub'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  harden-apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: Install Android SDK Build Tools
+        run: |
+          # Install Android SDK command-line tools
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+          
+          # Download Android command-line tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
+          unzip -q cmdline-tools.zip -d $HOME/android-sdk
+          mkdir -p $HOME/android-sdk/cmdline-tools/latest
+          mv $HOME/android-sdk/cmdline-tools/bin $HOME/android-sdk/cmdline-tools/latest/
+          mv $HOME/android-sdk/cmdline-tools/lib $HOME/android-sdk/cmdline-tools/latest/
+          
+          # Accept licenses
+          yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          
+          # Install build-tools and platform-tools
+          $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager "build-tools;34.0.0" "platform-tools"
+          
+          # Add to PATH
+          echo "$HOME/android-sdk/build-tools/34.0.0" >> $GITHUB_PATH
+          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+          
+          # Verify installations
+          which zipalign || echo "zipalign not found"
+          which apksigner || echo "apksigner not found"
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # No additional dependencies needed for basic version
+      
+      - name: Prepare keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          # Use environment variables or defaults
+          KEYSTORE_PWD="${KEYSTORE_PASSWORD:-android}"
+          ALIAS="${KEY_ALIAS:-debugkey}"
+          KEY_PWD="${KEY_PASSWORD:-android}"
+          
+          # Warn if using default credentials
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::Using auto-generated debug keystore. For production, configure KEYSTORE_BASE64 secret."
+          fi
+          if [ "$KEYSTORE_PWD" = "android" ]; then
+            echo "::warning::Using default keystore password. For production, configure KEYSTORE_PASSWORD secret."
+          fi
+          
+          # Run keystore preparation script
+          chmod +x tools/scripts/prepare_keystore.sh
+          ./tools/scripts/prepare_keystore.sh debug.keystore "$KEYSTORE_PWD" "$ALIAS" "$KEY_PWD"
+          
+          # Export for later steps
+          echo "KEYSTORE_FILE=debug.keystore" >> $GITHUB_ENV
+          echo "KEYSTORE_PASSWORD=$KEYSTORE_PWD" >> $GITHUB_ENV
+          echo "KEY_ALIAS=$ALIAS" >> $GITHUB_ENV
+          echo "KEY_PASSWORD=$KEY_PWD" >> $GITHUB_ENV
+      
+      - name: Download APK if URL provided
+        id: download
+        run: |
+          APK_SOURCE="${{ github.event.inputs.apk_source }}"
+          
+          if [[ "$APK_SOURCE" =~ ^https?:// ]]; then
+            echo "Downloading APK from URL..."
+            wget -O input_app.apk "$APK_SOURCE" || curl -L -o input_app.apk "$APK_SOURCE"
+            echo "APK_FILE=input_app.apk" >> $GITHUB_ENV
+          else
+            echo "Using local APK path..."
+            echo "APK_FILE=$APK_SOURCE" >> $GITHUB_ENV
+          fi
+      
+      - name: Run APK hardening
+        run: |
+          # Build command with flags
+          CMD="python3 tools/scripts/harden.py ${{ env.APK_FILE }}"
+          CMD="$CMD --output-dir hardened-output"
+          CMD="$CMD --keystore ${{ env.KEYSTORE_FILE }}"
+          CMD="$CMD --keystore-password ${{ env.KEYSTORE_PASSWORD }}"
+          CMD="$CMD --key-alias ${{ env.KEY_ALIAS }}"
+          CMD="$CMD --key-password ${{ env.KEY_PASSWORD }}"
+          
+          # Add optional flags
+          if [ "${{ github.event.inputs.resource_obfuscation }}" = "true" ]; then
+            CMD="$CMD --resource-obfuscation"
+          fi
+          
+          if [ "${{ github.event.inputs.dex_shell }}" = "false" ]; then
+            CMD="$CMD --no-dex-shell"
+          fi
+          
+          if [ "${{ github.event.inputs.integrity_check }}" = "false" ]; then
+            CMD="$CMD --no-integrity-check"
+          fi
+          
+          if [ "${{ github.event.inputs.env_detection }}" = "true" ]; then
+            CMD="$CMD --env-detection"
+          fi
+          
+          if [ "${{ github.event.inputs.anti_debug }}" = "true" ]; then
+            CMD="$CMD --anti-debug"
+          fi
+          
+          echo "Running: $CMD"
+          eval $CMD 2>&1 | tee hardening.log
+      
+      - name: Upload hardened APK
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardened-apk
+          path: |
+            hardened-output/hardened-*.apk
+            hardened-output/hardening_metadata.json
+          retention-days: 30
+      
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hardening-logs
+          path: |
+            hardening.log
+            hardened-output/*.json
+          retention-days: 30
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "## APK Hardening Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Input APK:** ${{ github.event.inputs.apk_source }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Configuration:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Resource Obfuscation: ${{ github.event.inputs.resource_obfuscation }}" >> $GITHUB_STEP_SUMMARY
+          echo "- DEX Shell: ${{ github.event.inputs.dex_shell }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Integrity Check: ${{ github.event.inputs.integrity_check }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Environment Detection: ${{ github.event.inputs.env_detection }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Anti-Debug: ${{ github.event.inputs.anti_debug }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f hardened-output/hardening_metadata.json ]; then
+            echo "**Operations Applied:**" >> $GITHUB_STEP_SUMMARY
+            cat hardened-output/hardening_metadata.json >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Artifacts:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Hardened APK available in 'hardened-apk' artifact" >> $GITHUB_STEP_SUMMARY
+          echo "- Logs available in 'hardening-logs' artifact" >> $GITHUB_STEP_SUMMARY
